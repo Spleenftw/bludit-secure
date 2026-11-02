@@ -1,0 +1,12 @@
+{
+  "name": "interlope/bludit-secure",
+  "description": "Per-user OIDC, TOTP and WebAuthn authentication for Bludit 3.22",
+  "type": "bludit-plugin",
+  "license": "MIT",
+  "require": {
+    "php": ">=8.2", "ext-sodium": "*", "ext-curl": "*", "ext-mbstring": "*",
+    "jumbojett/openid-connect-php": "^1.0",
+    "lbuchs/webauthn": "^2.2"
+  },
+  "config": {"sort-packages": true, "allow-plugins": false}
+}

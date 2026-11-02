@@ -1,0 +1,26 @@
+from http_helpers import *
+s,b,h=req();check('Connexion à Bludit' in b,'plugin intercepts native login');token=csrf(b)
+s,b,h=req('/admin/login?bs=password',{'secureCsrf':'bad','username':'admin','password':'TestPassword123'});check(s==303,'invalid CSRF rejected')
+s,b,h=req();token=csrf(b)
+s,b,h=req('/admin/login?bs=password',{'secureCsrf':token,'username':'admin','password':'wrong'});check(s==303,'bad password rejected')
+s,b,h=req('/admin/login?bs=password',{'secureCsrf':token,'username':'admin','password':'TestPassword123'});check(s==303 and 'bs=account' in h['Location'],'local login completes when MFA disabled')
+s,b,h=req('/admin/login?bs=account');check('Sécurité de mon compte' in b,'personal security page');token=csrf(b)
+s,b,h=req('/admin/login?bs=manage',{'secureCsrf':token,'op':'totp-start'});s,b,h=req('/admin/login?bs=account');secret=re.search(r'secret=([A-Z2-7]+)',b)[1]
+def totp(secret):
+    return subprocess.check_output([PHP,'-c',INI,'-r',f'require "{PLUGIN}/src/Totp.php"; echo \\BluditSecure\\Totp::code("{secret}", intdiv(time(),30));']).decode()
+code=totp(secret)
+s,b,h=req('/admin/login?bs=manage',{'secureCsrf':token,'op':'totp-confirm','code':code});s,b,h=req('/admin/login?bs=account');check('TOTP activé' in b,'TOTP enrollment confirmed')
+s,b,h=req('/admin/login?bs=manage',{'secureCsrf':token,'op':'recovery'});s,b,h=req('/admin/login?bs=account');codes=re.search(r'<pre>(.*?)</pre>',b,re.S)[1].splitlines();check(len(codes)==10,'ten recovery codes')
+s,b,h=req('/admin/login?bs=logout',{'secureCsrf':token});s,b,h=req();token=csrf(b)
+s,b,h=req('/admin/login?bs=password',{'secureCsrf':token,'username':'admin','password':'TestPassword123'});check('bs=mfa' in h['Location'],'password only creates pending state')
+s,b,h=req('/admin/ajax/dashboard');check('Vérification en deux étapes' in b,'pending cannot access AJAX')
+s,b,h=req('/admin/');check('Vérification en deux étapes' in b,'pending cannot access dashboard');token=csrf(b)
+s,b,h=req('/admin/login?bs=mfa',{'secureCsrf':token,'code':code});s,b,h=req('/admin/');check('Vérification en deux étapes' in b,'reject already used TOTP')
+s,b,h=req('/admin/login?bs=mfa',{'secureCsrf':token,'recovery':codes[0]});check('bs=account' in h['Location'],'recovery completes MFA')
+s,b,h=req('/admin/login?bs=account');check('9 code(s)' in b,'recovery atomically consumed');token=csrf(b)
+s,b,h=req('/admin/login?bs=logout',{'secureCsrf':token});s,b,h=req();token=csrf(b)
+s,b,h=req('/admin/login?bs=password',{'secureCsrf':token,'username':'admin','password':'TestPassword123'});s,b,h=req('/admin/');token=csrf(b)
+s,b,h=req('/admin/login?bs=mfa',{'secureCsrf':token,'recovery':codes[0]});s,b,h=req('/admin/');check('Vérification en deux étapes' in b,'recovery replay rejected')
+# Direct AJAX without a session must also remain unauthenticated.
+cookies.clear();s,b,h=req('/admin/ajax/dashboard');check('Connexion à Bludit' in b,'anonymous AJAX intercepted before native dispatch')
+print('Integration checks complete')
