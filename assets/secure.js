@@ -4,7 +4,7 @@
   const encode = value => btoa(String.fromCharCode(...new Uint8Array(value))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const status = document.getElementById('status');
   for (const button of document.querySelectorAll('[data-key]')) {
-    button.addEventListener('click', async () => {
+    const verify = async () => {
       const box = button.closest('.webauthn');
       const create = button.dataset.key === 'create';
       const kind = create ? 'create' : 'get';
@@ -13,12 +13,12 @@
         url.searchParams.set('bs', `key-${kind}-${phase}`);
         const response = await fetch(url, {method: 'POST', credentials: 'same-origin', body: new URLSearchParams({secureCsrf: box.dataset.csrf, ...fields})});
         const result = await response.json();
-        if (!response.ok || result.error) throw new Error(result.error || 'Vérification impossible.');
+        if (!response.ok || result.error) throw new Error(result.error || 'Verification failed.');
         return result;
       };
       button.disabled = true;
       try {
-        if (!window.PublicKeyCredential || !navigator.credentials) throw new Error('Ce navigateur ne prend pas en charge les passkeys.');
+        if (!window.PublicKeyCredential || !navigator.credentials) throw new Error('This browser does not support passkeys.');
         const args = await request('options');
         args.publicKey.challenge = decode(args.publicKey.challenge);
         if (args.publicKey.user) args.publicKey.user.id = decode(args.publicKey.user.id);
@@ -36,8 +36,13 @@
         }
         const result = await request('finish', fields);
         window.location.assign(result.redirect);
-      } catch (error) { status.textContent = error.name === 'NotAllowedError' ? 'Vérification annulée ou délai dépassé.' : error.message; }
+      } catch (error) { status.textContent = error.name === 'NotAllowedError' ? 'Verification cancelled or timed out.' : error.message; }
       finally { button.disabled = false; }
-    });
+    };
+    button.addEventListener('click', verify);
+    if (button.closest('[data-auto-passkey="true"]')) {
+      // One prompt per completed password/SSO step. Cancellation never loops.
+      verify();
+    }
   }
 })();

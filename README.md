@@ -1,93 +1,133 @@
 # bludit-secure
 
-Plugin d’authentification pour **Bludit 3.22.0**. Version **0.1.0 expérimentale**, à valider sur une copie du site avant activation en production.
+OIDC SSO, TOTP and passkey second-factor authentication for **Bludit 3.22.0**.
 
-## Fonctionnalités
+Current version: **0.1.5 — experimental**. Test on a copy of your site before deployment.
 
-- Connexion locale avec le mot de passe Bludit.
-- Bouton **Se connecter avec XYZ**, dont le nom est configurable, vers un fournisseur OIDC tel que Pocket ID.
-- Liaison volontaire de l’identité SSO par chaque utilisateur connecté. Association sur **issuer + subject**, jamais automatiquement sur l’adresse e-mail. Aucun utilisateur ni rôle créé à partir des claims OIDC.
-- TOTP par compte (SHA-1, six chiffres, 30 secondes), compatible avec le champ TOTP de Bitwarden. Activation après confirmation d’un code. Refus des codes déjà utilisés.
-- Plusieurs passkeys par compte, avec nom et suppression individuelle. Compatible avec les passkeys synchronisées, dont celles conservées dans Bitwarden. Vérification utilisateur obligatoire.
-- Choix personnel du second facteur : désactivé, TOTP, passkey, ou TOTP/passkey au choix. Possibilité de demander aussi ce facteur local après le SSO.
-- Dix codes de récupération à usage unique, affichés une fois, renouvelables.
+## Features
 
-Les passkeys locales sont enregistrées pour le domaine **Bludit**. La passkey de Pocket ID reste attachée au domaine **Pocket ID**. Ce sont deux inscriptions distinctes. Les passkeys locales servent ici de **second facteur**, après le mot de passe ou le SSO, et non de connexion locale sans mot de passe.
+- Keeps the existing Bludit login page, theme and password form.
+- Adds a full-width, slate-grey **Sign in with XYZ** button with a configurable provider name.
+- Automatically opens the browser passkey prompt after password verification when a passkey is enabled. Cancellation does not trigger a prompt loop; an explicit retry remains available.
+- Integrates **Security** into the native admin dashboard, including its sidebar, shield icon and Bootstrap controls. Sign out through the existing **Log out** sidebar entry.
+- Lets each user register TOTP, multiple named passkeys and an OIDC identity, then choose their own second-factor policy: disabled, TOTP, passkey, or either method.
+- Optionally requires the local second factor after SSO as well.
+- Provides ten single-use recovery codes, shown once and replaceable at any time.
+- Uses English for all plugin interface text. No specific password manager is required.
 
-## Prérequis
+Local passkeys belong to the **Bludit domain**. Your identity provider's passkeys belong to the **provider domain**. These are separate registrations. Local passkeys act as a second factor after a password or SSO; passwordless local login is not implemented.
 
-- PHP **8.2 ou supérieur**, extensions sodium, curl, mbstring et openssl, plus les prérequis habituels de Bludit.
-- Site configuré avec son URL publique **HTTPS** exacte dans Bludit ; certificat valide. Aucun mode dégradé HTTP.
-- Le serveur PHP doit pouvoir joindre l’issuer Pocket ID et ses endpoints de découverte, clés et jetons.
-- Accès au stockage `bl-content/databases/plugins/bludit-secure/` en écriture pour PHP.
-- Un reverse proxy doit transmettre une adresse client fiable à PHP via `REMOTE_ADDR`. Ne jamais faire confiance directement aux en-têtes fournis par le client.
+## Requirements
+
+- Bludit **3.22.0** and PHP **8.2+**.
+- PHP extensions: sodium, curl, mbstring and openssl, plus the usual Bludit requirements.
+- A valid HTTPS public URL configured in Bludit's advanced settings. HTTPS termination at a reverse proxy alone does not update this setting.
+- Write access for PHP to `bl-content/databases/plugins/bludit-secure/`.
+- Network access from PHP to the OIDC provider's discovery, token and signing-key endpoints.
+- A trusted reverse proxy configuration that supplies the actual client address as `REMOTE_ADDR` for rate limiting. Do not trust arbitrary client-supplied forwarding headers.
 
 ## Installation
 
-1. Sauvegarder les fichiers et `bl-content` et préparer un accès SSH de récupération.
-2. Décompresser le ZIP dans `bl-plugins/` pour obtenir `bl-plugins/bludit-secure/plugin.php`. Le ZIP fourni inclut `vendor/`.
-3. Activer **Bludit Secure** dans les plugins. Les sessions Bludit précédentes devront se reconnecter.
-4. Ouvrir **Sécurité de mon compte** dans la barre d’administration.
+1. Back up your site and `bl-content`; retain server access for recovery.
+2. Extract the packaged ZIP so the entry point is `bl-plugins/bludit-secure/plugin.php`.
+3. Verify that `bl-plugins/bludit-secure/vendor/autoload.php` exists.
+4. Configure Bludit's public URL with its exact HTTPS address, then activate **Bludit Secure**.
+5. Sign in again and open **Security** in the admin sidebar.
 
-Pour construire depuis les sources :
+Existing native Bludit sessions and remember-me cookies cannot bypass the plugin. Activation requires a fresh plugin-authenticated session.
+
+Packaged ZIPs include dependencies. Git checkouts do **not** include `vendor/`; install the locked dependencies before activation:
 
 ```sh
 composer install --no-dev --prefer-dist --optimize-autoloader
 ```
 
-Ne pas activer une copie source sans ses dépendances : les accès admin seront refusés tant que le plugin ne peut pas fonctionner.
+Activating without dependencies or with an HTTP site URL will block access to the admin area until the problem is corrected.
 
-## Configuration Pocket ID
+### Docker updates
 
-Dans Pocket ID, créer un client OIDC confidentiel avec son secret et enregistrer exactement l’URI de retour affichée dans les paramètres du plugin :
+For `bludit/docker`, copy the extracted plugin into `/usr/share/nginx/html/bl-plugins/bludit-secure/`. Example on the Docker host, with the ZIP already in `/tmp`:
+
+```sh
+docker cp bludit:/usr/share/nginx/html/bl-plugins/bludit-secure \
+  "/tmp/bludit-secure-backup-$(date +%Y%m%d-%H%M%S)"
+
+unzip -o /tmp/bludit-secure-0.1.5.zip -d /tmp/bludit-secure-0.1.5
+
+docker cp /tmp/bludit-secure-0.1.5/bludit-secure/. \
+  bludit:/usr/share/nginx/html/bl-plugins/bludit-secure/
+
+docker restart bludit
+```
+
+This updates plugin files. Account settings and enrolled factors remain in `bl-content`. Persist both plugin files and `bl-content` with appropriate mounts so container recreation does not discard them.
+
+## OIDC configuration
+
+Create a confidential OIDC client in your provider, such as Pocket ID. Register the exact redirect URI displayed in the plugin settings, for example:
 
 ```text
 https://blog.example/admin/login?bs=oidc
 ```
 
-Le chemin respecte le sous-répertoire et le chemin admin configurés dans Bludit. Reporter l’issuer exact (y compris sa convention de slash final), le Client ID et le Client secret dans le plugin. Choisir le nom du bouton, par exemple **Mon SSO**. Laisser le champ secret vide lors d’une modification conserve le secret existant.
+The URI respects Bludit's configured admin path and installation subdirectory. Enter the exact issuer URL, client ID and client secret. Choose the provider name displayed in **Sign in with XYZ**. Leaving the client secret field blank preserves its current value.
 
-Chaque utilisateur se connecte d’abord avec son compte Bludit, ouvre **Sécurité de mon compte**, puis clique sur **Lier mon compte à …**. Après validation chez Pocket ID, le compte est lié. Un même couple issuer/subject ne peut pas être associé à deux comptes Bludit.
+Each user first signs in to their existing Bludit account, opens **Security**, then selects **Link account to …**. After provider authentication, the identity is associated with that account using **issuer + subject**. Identities are never linked automatically by email. A provider identity cannot be linked to two accounts.
 
-Le plugin utilise le flux Authorization Code avec PKCE S256 et la bibliothèque jumbojett pour vérifier state, nonce, signature et claims. Les rôles restent ceux du compte Bludit. La déconnexion ferme la session Bludit, sans fermer la session Pocket ID ni celles des autres applications. Le logout OIDC global/back-channel n’est pas implémenté.
+Authorization Code flow uses PKCE S256. The jumbojett library checks state, nonce, token signature and claims. Bludit account roles remain authoritative; the plugin does not create accounts or assign roles from provider claims.
 
-## Facteurs personnels
+Logging out ends the Bludit session only. Provider-wide logout and OIDC back-channel logout are not implemented.
 
-Dans **Sécurité de mon compte** :
+## Per-user security settings
 
-- **TOTP** : préparer le secret, copier l’URI `otpauth://` dans Bitwarden, puis confirmer avec un code. Pas de service QR externe.
-- **Passkey** : donner un nom, ajouter une passkey et choisir Bitwarden dans le navigateur, ou un autre authentificateur compatible.
-- **Second facteur** : sélectionner le mode souhaité et décider s’il s’applique aussi après le SSO. Le mode « au choix » nécessite l’inscription des deux facteurs.
-- **Récupération** : générer les codes et les conserver à part.
+In **Security**:
 
-L’inscription du premier facteur active automatiquement son mode. Pour retirer un facteur exigé, sélectionner d’abord un mode compatible, ou désactiver le second facteur. Un facteur n’est jamais supprimé en désactivant implicitement la protection.
+- **TOTP:** select **Set up TOTP**, copy the `otpauth://` setup URI into your authenticator app and confirm a code. TOTP uses SHA-1, six digits and a 30-second period. Previously accepted codes cannot be reused.
+- **Passkeys:** select **Add passkey**, enter a name and choose your password manager or authenticator in the browser. Multiple passkeys are supported, with user verification required. The browser selects the authenticator; the plugin does not force a particular manager.
+- **Second factor:** choose the required method and whether it also applies after SSO. **TOTP or passkey** requires both methods to be registered.
+- **Recovery:** generate codes and store them separately. Generating new codes invalidates all previous codes.
 
-La gestion des facteurs nécessite une connexion complète datant de moins de cinq minutes. Au-delà, se déconnecter puis se reconnecter avec les facteurs existants. Les modifications invalident les autres sessions du plugin. Les utilisateurs choisissent leurs facteurs ; aucune obligation globale de MFA n’est imposée par cette version.
+Registering your first factor automatically enables its corresponding verification mode. Before removing a required factor, select a compatible mode or explicitly disable second-factor authentication. Deleting a factor never silently disables protection.
 
-## Stockage et récupération
+Changes require a completed sign-in within the last five minutes. After that, use **Log out** in the sidebar and sign in again with your existing factors. Changes invalidate other plugin sessions for that account. There is no site-wide mandatory MFA policy in this version.
 
-Les secrets TOTP, clés publiques, identités liées, empreintes des codes de récupération et limites de tentatives sont conservés dans un fichier chiffré et authentifié avec sodium. La clé de chiffrement est séparée, dans le même répertoire privé du plugin. Les fichiers sont protégés par un préambule PHP et des permissions 0600. **Ce chiffrement ne protège pas d’un attaquant ayant accès aux fichiers et à la clé du serveur.**
+## Storage and recovery
 
-Sauvegarder ensemble `secure.key.php`, `secure.data.php` et les utilisateurs Bludit. Perdre la clé rend les facteurs irrécupérables. Ne pas réattribuer un ancien nom de compte à une autre personne sans retirer ses inscriptions de sécurité. Le client secret OIDC est stocké dans la configuration PHP habituelle du plugin : protéger également cette configuration et ses sauvegardes.
+TOTP secrets, passkey public keys, linked identities, recovery-code hashes and rate-limit records are stored in an authenticated, sodium-encrypted file. The encryption key is stored separately in the same private plugin data directory. Files have a PHP exit preamble and permissions of 0600. Encryption does not protect against an attacker who can read both the server files and the key.
 
-Les connexions incomplètes expirent après cinq minutes, les challenges WebAuthn après deux minutes. Les vérifications disposent d’un budget persistant par compte et par IP : dix tentatives sur cinq minutes, avec budgets séparés pour la gestion et l’inscription. Les sessions natives et cookies « se souvenir de moi » ne suffisent pas à passer la protection du plugin. L’accès AJAX est contrôlé avant le dispatch Bludit.
+Back up `secure.key.php`, `secure.data.php` and the Bludit user database together. Losing the key makes stored factors unrecoverable. Do not reuse an old account name for another person without removing its security registrations. The OIDC client secret is stored in the regular plugin configuration; protect that file and its backups too.
 
-En cas de perte de tous les facteurs : utiliser un code de récupération. Sans code, un administrateur disposant de SSH peut désactiver temporairement le plugin en renommant son répertoire `bl-plugins/bludit-secure/` **hors de `bl-plugins`**. Cela rétablit l’authentification native pour tout le site : effectuer l’opération en maintenance avec l’accès `/admin` restreint, puis restaurer le plugin et réparer les inscriptions. Désinstaller le plugin depuis Bludit supprime ses données ; ne pas utiliser la désinstallation comme une simple désactivation.
+Incomplete sign-ins expire after five minutes; WebAuthn challenges expire after two minutes. Persistent verification budgets allow ten attempts per account and IP over five minutes, with separate budgets for management and enrollment. The plugin checks authentication before Bludit dispatches admin AJAX requests.
 
-Le plugin protège les **sessions web `/admin`**. Il ne modifie pas l’authentification de l’API Bludit, des autres plugins ou des services externes.
+If all factors are lost, use a recovery code. Without one, a server administrator can temporarily move `bl-plugins/bludit-secure/` **outside `bl-plugins`** to restore native login. Restrict admin access during this maintenance operation, then restore the plugin and repair registrations. Uninstalling the plugin through Bludit deletes its data; it is not a temporary disable operation.
 
-## Vérification
+The plugin protects **web sessions under `/admin`**. It does not change authentication for the Bludit API, other plugins or external services.
+
+JavaScript URLs include a content hash so updated passkey behavior is not hidden by stale asset caches.
+
+## Validation
 
 ```sh
 php tests/core.php
 composer validate --no-check-publish
 composer audit --no-dev
+# With Node.js installed:
+node tests/auto-passkey.cjs
 ```
 
-Les tests HTTP dans `tests/http_totp.py` et `tests/http_webauthn.py` nécessitent une **instance jetable** de Bludit 3.22.0, installée avec `admin / TestPassword123`, le plugin activé, une URL publique de fixture `https://127.0.0.1:18765/`, et un serveur PHP local sur `http://127.0.0.1:18765/`. Le transport HTTP est réservé à la fixture ; les assertions WebAuthn simulent l’origine HTTPS. Ils ne remplacent pas les essais navigateur HTTPS.
+HTTP tests in `tests/http_totp.py` and `tests/http_webauthn.py` require a **disposable** Bludit 3.22.0 instance with the plugin activated and test credentials `admin / TestPassword123`. The fixture uses a configured public URL of `https://127.0.0.1:18765/` and a PHP test server at `http://127.0.0.1:18765/`. HTTP transport and simulated HTTPS origins are fixture-only and do not replace real browser testing.
 
-Variables : `TEST_PHP` (binaire PHP), `TEST_PHP_INI` (php.ini), `TEST_BLUDIT` (racine de la fixture). `TEST_BASE` est facultatif. Exécuter d’abord `http_totp.py` sur une fixture neuve, puis `http_webauthn.py`. **Le test WebAuthn efface les données de sécurité du plugin dans cette fixture**, jamais lui fournir un site réel.
+Set `TEST_PHP` (PHP executable), `TEST_PHP_INI` (php.ini) and `TEST_BLUDIT` (fixture root). `TEST_BASE` is optional. Run `http_totp.py` on a fresh fixture, then `http_webauthn.py`. **The WebAuthn test deletes plugin security records in that fixture. Never point it at a real site.**
 
-Vérifié : syntaxe PHP 8.4, vecteurs RFC 6238, stockage chiffré et altération, limites persistantes, transactions, CSRF, connexion locale, blocage dashboard/AJAX avant MFA, refus du rejeu TOTP/récupération, inscription WebAuthn et signatures d’assertion, rejet d’une origine ou signature invalide et d’un challenge consommé. `composer audit` ne signale aucun avis au moment de la construction.
+Local checks cover PHP 8.4 syntax, RFC 6238 vectors, encrypted storage and tampering, transactions, persistent limits, native login CSRF, pending-session dashboard/AJAX protection, TOTP and recovery-code replay rejection, signed WebAuthn registration and assertions, invalid origins/signatures, consumed challenges, native admin integration and automatic prompting without cancellation loops.
 
-**À valider avant production** : connexion complète au Pocket ID réel, passkeys Bitwarden dans le navigateur avec HTTPS réel, reverse proxy, restauration de sauvegarde et compatibilité avec les autres plugins d’authentification. Aucune validation sur le site de production n’a été réalisée.
+The password-to-passkey browser flow over HTTPS was also reported working by the user. A complete live Pocket ID flow, backup restoration and compatibility with other authentication plugins still require validation. The latest local dependency audit reported no known advisories; rerun it before release.
+
+## Changes in 0.1.5
+
+- Retains the native login page and integrates Security into the dashboard.
+- Automatically requests a passkey after password verification.
+- Versions JavaScript URLs by content hash.
+- Uses English interface text and native dropdown styling.
+- Adds a sidebar shield icon and removes duplicate sign-out buttons.
+- Styles the SSO button as a full-width secondary action with spacing below Login.
