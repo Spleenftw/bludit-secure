@@ -2,7 +2,7 @@
 
 OIDC SSO, TOTP and passkey second-factor authentication for **Bludit 3.22.0**.
 
-Current version: **0.1.6 — experimental**. Test on a copy of your site before deployment.
+Current version: **0.1.8 — experimental**. Test on a copy of your site before deployment.
 
 ## Features
 
@@ -55,9 +55,9 @@ For `bludit/docker`, copy the extracted plugin into `/usr/share/nginx/html/bl-pl
 docker cp bludit:/usr/share/nginx/html/bl-plugins/bludit-secure \
   "/tmp/bludit-secure-backup-$(date +%Y%m%d-%H%M%S)"
 
-unzip -o /tmp/bludit-secure-0.1.6.zip -d /tmp/bludit-secure-0.1.6
+unzip -o /tmp/bludit-secure-0.1.8.zip -d /tmp/bludit-secure-0.1.8
 
-docker cp /tmp/bludit-secure-0.1.6/bludit-secure/. \
+docker cp /tmp/bludit-secure-0.1.8/bludit-secure/. \
   bludit:/usr/share/nginx/html/bl-plugins/bludit-secure/
 
 docker restart bludit
@@ -110,13 +110,27 @@ Back up `secure.key.php`, `secure.data.php` and the Bludit user database togethe
 
 The encryption key and encrypted database are created together. If either file subsequently disappears while the other remains, authentication fails closed; restore the matching pair from backup. A legacy installation containing a key but no database also requires manual recovery. The plugin cannot distinguish deletion of both files from a fresh installation.
 
-Incomplete sign-ins expire after five minutes; WebAuthn challenges expire after two minutes. Persistent verification budgets allow ten attempts per account and IP over five minutes, with separate budgets for management and enrollment. The plugin checks authentication before Bludit dispatches admin AJAX requests.
+Incomplete sign-ins expire after five minutes; WebAuthn challenges expire after two minutes. Persistent verification budgets allow ten failed or in-flight checks per account and IP over five minutes. Password checks have their own budget; TOTP, recovery codes and passkey assertions share a separate MFA budget. Successful checks refund their own reservation without clearing previous failures. A successful password check never resets an MFA lockout. Passkey challenge requests, enrollment challenge requests, SSO starts and authenticated management each have separate limits of 60 requests per account and IP over five minutes. Passkey enrollment verification has its own ten-attempt budget and also refunds successes. Cancelling a passkey prompt consumes only a challenge request, not an MFA verification attempt. The plugin checks authentication before Bludit dispatches admin AJAX requests. Bludit's native IP blacklist is also respected.
 
 If all factors are lost, use a recovery code. Without one, a server administrator can temporarily move `bl-plugins/bludit-secure/` **outside `bl-plugins`** to restore native login. Restrict admin access during this maintenance operation, then restore the plugin and repair registrations. Uninstalling the plugin through Bludit deletes its data; it is not a temporary disable operation.
 
 The plugin protects **web sessions under `/admin`**. It does not change authentication for the Bludit API, other plugins or external services.
 
 JavaScript URLs include a content hash so updated passkey behavior is not hidden by stale asset caches.
+
+## Changes in 0.1.8
+
+- Prevents successful sign-ins and multiple protocol steps from accumulating in one shared authentication quota.
+- Separates password checks, MFA checks and passkey challenge issuance; refunds successful credential verification while preserving failures and concurrent reservations.
+- Retains a shared MFA failure budget across TOTP, recovery codes and passkey assertions to prevent bypass by switching methods.
+- Gives passkey rate limits an explicit HTTP 429 response and retry message.
+- Raises the separate SSO-start, challenge and authenticated-management request limits to 60 per five minutes.
+
+## Changes in 0.1.7
+
+- Fixes an Invalid CSRF error when another login tab regenerates Bludit's native token, including during sign-in after password revocation.
+- Keeps CSRF validation on every password submission, using the plugin's session token for enhanced forms and the native token for unenhanced custom themes.
+- Explains how to retry when a form's session has genuinely expired.
 
 ## Changes in 0.1.6
 

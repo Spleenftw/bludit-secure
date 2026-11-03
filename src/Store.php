@@ -73,18 +73,35 @@ final class Store
             $a = self::account($d, $name); $result = $fn($a); $d['accounts'][$name] = $a; return $result;
         });
     }
-    /** Persistent per-account + per-IP budget, independent of sessions. */
-    public function attempt(string $name, string $ip): bool {
-        return $this->transaction(function (&$d) use ($name, $ip) {
+    /** Reserve before checking credentials so concurrent failures cannot exceed the budget. */
+    public function beginAttempt(string $name, string $ip, int $limit = 10): ?array {
+        if ($limit < 1) { throw new \InvalidArgumentException('Invalid attempt limit'); }
+        return $this->transaction(function (&$d) use ($name, $ip, $limit) {
             $now = time();
             foreach ($d['limits'] as $k=>$v) { if ($v['until'] <= $now) { unset($d['limits'][$k]); } }
             $ids = [hash('sha256', 'account:'.$name), hash('sha256', 'ip:'.$ip)];
-            foreach ($ids as $id) { if (($d['limits'][$id]['count'] ?? 0) >= 10) { return false; } }
+            foreach ($ids as $id) { if (($d['limits'][$id]['count'] ?? 0) >= $limit) { return null; } }
+            $reservation = [];
             foreach ($ids as $id) {
                 $d['limits'][$id] ??= ['count'=>0, 'until'=>$now+300];
+                $d['limits'][$id]['window'] ??= bin2hex(random_bytes(8));
                 ++$d['limits'][$id]['count'];
+                $reservation[$id] = $d['limits'][$id]['window'];
             }
-            return true;
+            return $reservation;
         });
+    }
+    /** Refund only this successful attempt, preserving other accounts' or requests' failures. */
+    public function releaseAttempt(array $reservation): void {
+        $this->transaction(function (&$d) use ($reservation) {
+            foreach ($reservation as $id=>$window) {
+                if (($d['limits'][$id]['window'] ?? null) !== $window) { continue; }
+                if (--$d['limits'][$id]['count'] <= 0) { unset($d['limits'][$id]); }
+            }
+        });
+    }
+    /** Throttle non-verification work without refunding successful requests. */
+    public function attempt(string $name, string $ip, int $limit = 10): bool {
+        return $this->beginAttempt($name, $ip, $limit) !== null;
     }
 }
