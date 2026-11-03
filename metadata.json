@@ -1,1 +1,1 @@
-{"author":"Interlope","version":"1.0.1","releaseDate":"2026-11-03","license":"MIT","compatible":"3.22.0","notes":"Per-user OIDC SSO, TOTP, passkeys and recovery codes. Requires PHP 8.2+, HTTPS, sodium, curl, mbstring and openssl."}
+{"author":"Interlope","version":"1.0.2","releaseDate":"2026-11-03","license":"MIT","compatible":"3.22.0","notes":"Per-user OIDC SSO, TOTP, passkeys and recovery codes. Requires PHP 8.2+, HTTPS, sodium, curl, mbstring and openssl."}

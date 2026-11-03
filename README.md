@@ -2,7 +2,7 @@
 
 OIDC SSO, TOTP and passkey second-factor authentication for **Bludit 3.22.0**.
 
-Current version: **1.0.1**.
+Current version: **1.0.2**.
 
 ## Features
 
@@ -10,6 +10,7 @@ Current version: **1.0.1**.
 - Adds a full-width, slate-grey **Sign in with XYZ** button with a configurable provider name.
 - Automatically opens the browser passkey prompt after password verification when a passkey is enabled. Cancellation does not trigger a prompt loop; an explicit retry remains available.
 - Integrates **Security** into the native admin dashboard, including its sidebar, shield icon and Bootstrap controls. Sign out through the existing **Log out** sidebar entry.
+- Gives authors, editors and administrators access to their own Security page through desktop and mobile navigation, with an additional shortcut in their own Profile → Security tab.
 - Shows SSO link status, provider, SSO username and SSO email in the administrator's native **Users** list and the user's **Security** page.
 - Lets each user register TOTP, multiple named passkeys and an OIDC identity, then choose their own second-factor policy: disabled, TOTP, passkey, or either method.
 - Optionally requires the local second factor after SSO as well.
@@ -55,9 +56,9 @@ For `bludit/docker`, copy the extracted plugin into `/usr/share/nginx/html/bl-pl
 docker cp bludit:/usr/share/nginx/html/bl-plugins/bludit-secure \
   "/tmp/bludit-secure-backup-$(date +%Y%m%d-%H%M%S)"
 
-unzip -o /tmp/bludit-secure-1.0.1.zip -d /tmp/bludit-secure-1.0.1
+unzip -o /tmp/bludit-secure-1.0.2.zip -d /tmp/bludit-secure-1.0.2
 
-docker cp /tmp/bludit-secure-1.0.1/bludit-secure/. \
+docker cp /tmp/bludit-secure-1.0.2/bludit-secure/. \
   bludit:/usr/share/nginx/html/bl-plugins/bludit-secure/
 
 docker restart bludit
@@ -91,6 +92,8 @@ Logging out ends the Bludit session only. Provider-wide logout and OIDC back-cha
 
 In **Security**:
 
+Every signed-in author, editor and administrator can manage their own methods. Open **Security** in desktop or mobile navigation, or **Profile → Security → Manage authentication methods**. The direct page is `/admin/plugin/pluginbluditsecure`, adjusted for your configured admin path. Global SSO configuration and the Users list remain administrator-only.
+
 - **TOTP:** select **Set up TOTP**, copy the `otpauth://` setup URI into your authenticator app and confirm a code. TOTP uses SHA-1, six digits and a 30-second period. Previously accepted codes cannot be reused.
 - **Passkeys:** select **Add passkey**, enter a name and choose your password manager or authenticator in the browser. Multiple passkeys are supported, with user verification required. The browser selects the authenticator; the plugin does not force a particular manager.
 - **Second factor:** choose the required method and whether it also applies after SSO. **TOTP or passkey** requires both methods to be registered.
@@ -117,6 +120,12 @@ If all factors are lost, use a recovery code. Without one, a server administrato
 The plugin protects **web sessions under `/admin`**. It does not change authentication for the Bludit API, other plugins or external services.
 
 JavaScript URLs include a content hash so updated passkey behavior is not hidden by stale asset caches.
+
+## Changes in 1.0.2
+
+- Makes personal Security navigation available to authors, whose native plugin sidebar is hidden by Bludit.
+- Adds the personal Security link to mobile navigation for authors and editors.
+- Adds an authentication-management shortcut to the user's own Profile → Security tab.
 
 ## Changes in 1.0.1
 

@@ -397,6 +397,15 @@ final class App
             'emailVerified'=>$oidc->getVerifiedClaims('email_verified') === true
         ];
     }
+    public function navigationView(): string {
+        global $layout, $user;
+        $name = $this->authenticated();
+        if ($name === null) { return ''; }
+        $ownProfile = ($layout['view'] ?? '') === 'edit-user' && isset($user) && is_object($user) && method_exists($user, 'username') && $user->username() === $name;
+        $data = json_encode(['account'=>$this->accountUrl(), 'logout'=>DOMAIN_ADMIN.'logout', 'ownProfile'=>$ownProfile], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
+        $version = substr(hash_file('sha256', dirname(__DIR__).'/assets/navigation.js'), 0, 16);
+        return '<script type="application/json" id="bs-security-navigation">'.$data.'</script><script src="'.$this->e($this->plugin->htmlPath().'assets/navigation.js?v='.$version).'" defer></script>';
+    }
     public function usersViewEnhancement(): string {
         global $layout, $users;
         if (($layout['view'] ?? '') !== 'users') { return ''; }
