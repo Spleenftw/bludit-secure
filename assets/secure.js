@@ -33,6 +33,7 @@
         } else {
           fields.authenticatorData = encode(credential.response.authenticatorData);
           fields.signature = encode(credential.response.signature);
+          if (credential.response.userHandle !== null && credential.response.userHandle !== undefined) fields.userHandle = encode(credential.response.userHandle);
         }
         const result = await request('finish', fields);
         window.location.assign(result.redirect);

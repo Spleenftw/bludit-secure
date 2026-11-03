@@ -15,6 +15,12 @@ class pluginBluditSecure extends Plugin
         return $html.'<p>Leave the secret blank to keep the existing value. OIDC redirect URI: <code>'.htmlspecialchars(DOMAIN_ADMIN.'login?bs=oidc').'</code>. Accounts are never linked automatically by email. Each user must link their SSO identity from Security.</p>';
     }
     public function post() {
+        try { (new \BluditSecure\App($this))->authorizeConfiguration(); }
+        catch (\BluditSecure\UserError $e) {
+            http_response_code(403);
+            header('Content-Type: text/plain; charset=UTF-8');
+            exit('Sign in again as an administrator before changing SSO configuration.');
+        }
         if (empty($_POST['clientSecret'])) { unset($_POST['clientSecret']); }
         $issuer = trim($_POST['issuer'] ?? '');
         if ($issuer !== '' && (parse_url($issuer, PHP_URL_SCHEME) !== 'https' || parse_url($issuer, PHP_URL_USER) || parse_url($issuer, PHP_URL_QUERY) || parse_url($issuer, PHP_URL_FRAGMENT))) { return false; }
@@ -29,9 +35,10 @@ class pluginBluditSecure extends Plugin
             require_once __DIR__.'/src/Store.php';
             require_once __DIR__.'/src/Totp.php';
             require_once __DIR__.'/src/App.php';
+            require_once __DIR__.'/src/OidcClient.php';
             (new \BluditSecure\App($this))->run();
         } catch (\Throwable $e) {
-            error_log('bludit-secure: '.get_class($e).' '.$e->getMessage());
+            error_log('bludit-secure: '.get_class($e));
             http_response_code(503);
             header('Cache-Control: no-store');
             exit('Bludit Secure is unavailable. Check the server logs.');

@@ -28,6 +28,8 @@ Local passkeys belong to the **Bludit domain**. Your identity provider's passkey
 
 ## Installation
 
+Download the installable release ZIP and extract its `bludit-secure/` directory into `bl-plugins/`. Release packages include the required Composer dependencies. If installing from a source archive or checkout, install the dependencies before activating the plugin.
+
 1. Back up your site and `bl-content`; retain server access for recovery.
 2. Extract the packaged ZIP so the entry point is `bl-plugins/bludit-secure/plugin.php`.
 3. Verify that `bl-plugins/bludit-secure/vendor/autoload.php` exists.
@@ -76,6 +78,8 @@ Each user first signs in to their existing Bludit account, opens **Security**, t
 
 Authorization Code flow uses PKCE S256. The jumbojett library checks state, nonce, token signature and claims. Bludit account roles remain authoritative; the plugin does not create accounts or assign roles from provider claims.
 
+The plugin requires advertised PKCE S256 support, a matching nonce, integer `iat` and `exp` claims, and a matching authorized party (`azp`) for multiple audiences. State is checked before contacting the token endpoint. Discovery, token and signing-key endpoints must use direct HTTPS URLs: HTTP and endpoint redirects are rejected. Responses are limited to 1 MiB. Authorization starts have a separate persistent attempt budget. Changing the global SSO configuration requires an administrator sign-in within the last five minutes.
+
 Logging out ends the Bludit session only. Provider-wide logout and OIDC back-channel logout are not implemented.
 
 ## Per-user security settings
@@ -91,11 +95,15 @@ Registering your first factor automatically enables its corresponding verificati
 
 Changes require a completed sign-in within the last five minutes. After that, use **Log out** in the sidebar and sign in again with your existing factors. Changes invalidate other plugin sessions for that account. There is no site-wide mandatory MFA policy in this version.
 
+Native password, password salt or role changes invalidate plugin sessions and pending sign-ins on their next request. A changed role takes effect after a fresh sign-in.
+
 ## Storage and recovery
 
 TOTP secrets, passkey public keys, linked identities, recovery-code hashes and rate-limit records are stored in an authenticated, sodium-encrypted file. The encryption key is stored separately in the same private plugin data directory. Files have a PHP exit preamble and permissions of 0600. Encryption does not protect against an attacker who can read both the server files and the key.
 
 Back up `secure.key.php`, `secure.data.php` and the Bludit user database together. Losing the key makes stored factors unrecoverable. Do not reuse an old account name for another person without removing its security registrations. The OIDC client secret is stored in the regular plugin configuration; protect that file and its backups too.
+
+The encryption key and encrypted database are created together. If either file subsequently disappears while the other remains, authentication fails closed; restore the matching pair from backup. A legacy installation containing a key but no database also requires manual recovery. The plugin cannot distinguish deletion of both files from a fresh installation.
 
 Incomplete sign-ins expire after five minutes; WebAuthn challenges expire after two minutes. Persistent verification budgets allow ten attempts per account and IP over five minutes, with separate budgets for management and enrollment. The plugin checks authentication before Bludit dispatches admin AJAX requests.
 
@@ -104,24 +112,6 @@ If all factors are lost, use a recovery code. Without one, a server administrato
 The plugin protects **web sessions under `/admin`**. It does not change authentication for the Bludit API, other plugins or external services.
 
 JavaScript URLs include a content hash so updated passkey behavior is not hidden by stale asset caches.
-
-## Validation
-
-```sh
-php tests/core.php
-composer validate --no-check-publish
-composer audit --no-dev
-# With Node.js installed:
-node tests/auto-passkey.cjs
-```
-
-HTTP tests in `tests/http_totp.py` and `tests/http_webauthn.py` require a **disposable** Bludit 3.22.0 instance with the plugin activated and test credentials `admin / TestPassword123`. The fixture uses a configured public URL of `https://127.0.0.1:18765/` and a PHP test server at `http://127.0.0.1:18765/`. HTTP transport and simulated HTTPS origins are fixture-only and do not replace real browser testing.
-
-Set `TEST_PHP` (PHP executable), `TEST_PHP_INI` (php.ini) and `TEST_BLUDIT` (fixture root). `TEST_BASE` is optional. Run `http_totp.py` on a fresh fixture, then `http_webauthn.py`. **The WebAuthn test deletes plugin security records in that fixture. Never point it at a real site.**
-
-Local checks cover PHP 8.4 syntax, RFC 6238 vectors, encrypted storage and tampering, transactions, persistent limits, native login CSRF, pending-session dashboard/AJAX protection, TOTP and recovery-code replay rejection, signed WebAuthn registration and assertions, invalid origins/signatures, consumed challenges, native admin integration and automatic prompting without cancellation loops.
-
-The password-to-passkey browser flow over HTTPS was also reported working by the user. A complete live Pocket ID flow, backup restoration and compatibility with other authentication plugins still require validation. The latest local dependency audit reported no known advisories; rerun it before release.
 
 ## Changes in 0.1.5
 

@@ -44,45 +44,65 @@ final class App
         if (!$u || ($u['password'] ?? '!') === '!') { throw new UserError('Account unavailable'); }
         return $u;
     }
+    /** Bind authentication to the native credentials and role, without storing them in the session. */
+    private function userStamp(array $user): string {
+        return hash('sha256', json_encode([$user['password'], $user['salt'] ?? '', $user['role']], JSON_THROW_ON_ERROR));
+    }
     private function allowed(array $a, string $factor): bool {
         return $a['mode'] === 'either' || $a['mode'] === $factor;
     }
     private function requiresMfa(array $a, string $via): bool { return $a['mode'] !== 'off' && ($via !== 'sso' || $a['ssoMfa']); }
-    private function pending(string $name, string $via): void {
-        $this->user($name);
-        session_regenerate_id(true);
-        unset($_SESSION['bs']['auth'], $_SESSION['bs']['challenge']);
+    private function pending(string $name, string $via, ?int $revision = null, ?string $userStamp = null): void {
+        $user = $this->user($name);
         $a = $this->store->get($name);
-        $_SESSION['bs']['pending'] = ['name'=>$name, 'via'=>$via, 'expires'=>time()+300, 'revision'=>$a['revision']];
+        if (($revision !== null && $a['revision'] !== $revision) || ($userStamp !== null && $this->userStamp($user) !== $userStamp)) { throw new UserError('Account changed. Please sign in again.'); }
+        session_regenerate_id(true);
+        // Do not carry enrollment secrets, recovery codes or linking flows across sign-ins.
+        $_SESSION['bs'] = ['csrf'=>bin2hex(random_bytes(32))];
+        $_SESSION['bs']['pending'] = ['name'=>$name, 'via'=>$via, 'expires'=>time()+300, 'revision'=>$a['revision'], 'userStamp'=>$this->userStamp($user)];
         if (!$this->requiresMfa($a, $via)) { $this->finish($name); }
         $this->go('mfa');
     }
     private function finish(string $name): never {
-        global $login, $security;
-        $u = $this->user($name); $a = $this->store->get($name);
-        $login->setLogin($name, $u['role']);
-        $security->generateTokenCSRF();
-        $_SESSION['bs']['auth'] = ['name'=>$name, 'at'=>time(), 'revision'=>$a['revision']];
-        unset($_SESSION['bs']['pending'], $_SESSION['bs']['challenge']);
+        $this->completePending($name);
         header('Location: '.DOMAIN_ADMIN, true, 303); exit;
+    }
+    private function completePending(string $name): void {
+        global $login, $security;
+        $p = $this->pendingUser();
+        if ($p['name'] !== $name) { throw new UserError('Invalid sign-in account.'); }
+        // Recheck under the storage lock: a concurrent factor change must revoke this login.
+        $this->store->transaction(function (&$d) use ($name, $p, $login, $security) {
+            $u = $this->user($name); $a = Store::account($d, $name);
+            if ($a['revision'] !== $p['revision'] || $this->userStamp($u) !== $p['userStamp']) { throw new UserError('Account changed. Please sign in again.'); }
+            $login->setLogin($name, $u['role']);
+            $security->generateTokenCSRF();
+            $_SESSION['bs']['auth'] = ['name'=>$name, 'at'=>time(), 'revision'=>$p['revision'], 'userStamp'=>$p['userStamp']];
+        });
+        unset($_SESSION['bs']['pending'], $_SESSION['bs']['challenge']);
+        $_SESSION['bs']['csrf'] = bin2hex(random_bytes(32));
     }
     private function authenticated(): ?string {
         global $login;
         $auth = $_SESSION['bs']['auth'] ?? null;
         if (!$auth || !$login->isLogged() || $login->username() !== $auth['name']) { return null; }
         $a = $this->store->get($auth['name']);
-        return $auth['revision'] === $a['revision'] ? $auth['name'] : null;
+        return $auth['revision'] === $a['revision'] && ($auth['userStamp'] ?? '') === $this->userStamp($this->user($auth['name'])) ? $auth['name'] : null;
     }
     private function recent(): string {
         $name = $this->authenticated();
         if (!$name || $_SESSION['bs']['auth']['at'] < time()-300) { throw new UserError('Sign in again before changing your account security.'); }
         return $name;
     }
+    public function authorizeConfiguration(): void {
+        $name = $this->recent();
+        if ($this->user($name)['role'] !== 'admin') { throw new UserError('Administrator access is required.'); }
+    }
     private function pendingUser(): array {
         $p = $_SESSION['bs']['pending'] ?? null;
         if (!$p || $p['expires'] < time()) { unset($_SESSION['bs']['pending']); throw new UserError('Sign-in attempt expired. Please start again.'); }
-        $this->user($p['name']);
-        if ($this->store->get($p['name'])['revision'] !== $p['revision']) { unset($_SESSION['bs']['pending']); throw new UserError('Authentication methods have changed. Please sign in again.'); }
+        $user = $this->user($p['name']);
+        if ($this->store->get($p['name'])['revision'] !== $p['revision'] || ($p['userStamp'] ?? '') !== $this->userStamp($user)) { unset($_SESSION['bs']['pending']); throw new UserError('Account or authentication methods have changed. Please sign in again.'); }
         return $p;
     }
     private function budget(string $name, string $scope = 'auth'): void {
@@ -91,12 +111,15 @@ final class App
     }
     public function run(): void {
         global $login, $security;
+        header('Cache-Control: no-store');
+        header('Referrer-Policy: no-referrer');
         $_SESSION['bs'] ??= [];
         $_SESSION['bs']['csrf'] ??= bin2hex(random_bytes(32));
         $action = (string)($_GET['bs'] ?? '');
         $name = $this->authenticated();
         // Native sessions, remember cookies and direct AJAX cannot bypass this marker.
         if (!$name) {
+            if (isset($_SESSION['bs']['auth'])) { $_SESSION['bs'] = ['csrf'=>bin2hex(random_bytes(32))]; }
             foreach (['username','role','fingerPrint','sessionTime'] as $k) { \Session::set($k, null); }
         }
         if (!$name && ($GLOBALS['layout']['slug'] ?? '') === 'ajax') { $this->json(['error'=>'Complete authentication is required.'], 401); }
@@ -121,7 +144,8 @@ final class App
             // Bludit renders its existing login theme and view.
             return;
         } catch (\Throwable $e) {
-            error_log('bludit-secure: '.get_class($e).' '.$e->getMessage());
+            // Provider exceptions can contain tokens or response bodies.
+            error_log('bludit-secure: '.get_class($e));
             $msg = $e instanceof UserError ? $e->getMessage() : 'Verification failed. Try again or check the server logs.';
             // Never expose protocol payloads, tokens or secrets to the browser.
             if (str_starts_with($action, 'key-')) { $this->json(['error'=>'Verification failed. Sign in again or retry.'], 400); }
@@ -135,7 +159,7 @@ final class App
         $this->budget($name);
         $u = $users->getUserDB($name);
         if (!$u || $u['password'] === '!' || !hash_equals($u['password'], $users->generatePasswordHash($pw, $u['salt']))) { throw new UserError('Incorrect username or password.'); }
-        $this->pending($name, 'password');
+        $this->pending($name, 'password', null, $this->userStamp($u));
     }
     /** Enhance the native login form in place; keep the theme, branding and layout. */
     public function renderLogin(string $html): string {
@@ -171,7 +195,8 @@ final class App
     }
     private function verifyCode(): never {
         $p = $this->pendingUser(); $this->budget($p['name']);
-        $ok = $this->store->update($p['name'], function (&$a) {
+        $ok = $this->store->update($p['name'], function (&$a) use ($p) {
+            if ($a['revision'] !== $p['revision']) { throw new UserError('Account changed. Please sign in again.'); }
             $recovery = trim((string)($_POST['recovery'] ?? ''));
             if ($recovery !== '') {
                 foreach ($a['recovery'] as $i=>$hash) { if (hash_equals($hash, hash('sha256', $recovery))) { unset($a['recovery'][$i]); $a['recovery'] = array_values($a['recovery']); return true; } }
@@ -242,12 +267,14 @@ final class App
     }
     private function manage(): never {
         $name = $this->recent(); $this->budget($name, 'manage'); $op = (string)($_POST['op'] ?? '');
+        $expectedRevision = $_SESSION['bs']['auth']['revision'];
         if ($op === 'totp-start') {
             $_SESSION['bs']['enroll'] = ['name'=>$name, 'secret'=>Totp::secret(), 'expires'=>time()+300]; $this->go('account');
         }
         $codes = [];
         if ($op === 'recovery') { for ($i=0; $i<10; ++$i) { $codes[] = bin2hex(random_bytes(10)); } }
-        $revision = $this->store->update($name, function (&$a) use ($op, $name, $codes) {
+        $revision = $this->store->update($name, function (&$a) use ($op, $name, $codes, $expectedRevision) {
+            if ($a['revision'] !== $expectedRevision) { throw new UserError('Account changed. Please sign in again.'); }
             switch ($op) {
                 case 'totp-confirm':
                     $en = $_SESSION['bs']['enroll'] ?? null;
@@ -276,9 +303,9 @@ final class App
         if ($codes) { $_SESSION['bs']['codes'] = $codes; }
         $_SESSION['bs']['notice'] = 'Changes saved.'; $this->go('account');
     }
-    private function oidcClient(): \Jumbojett\OpenIDConnectClient {
+    private function oidcClient(): OidcClient {
         if (!$this->ssoEnabled() || parse_url($this->cfg('issuer'), PHP_URL_SCHEME) !== 'https') { throw new UserError('SSO is not configured.'); }
-        $oidc = new \Jumbojett\OpenIDConnectClient($this->cfg('issuer'), $this->cfg('clientId'), $this->cfg('clientSecret'));
+        $oidc = new OidcClient($this->cfg('issuer'), $this->cfg('clientId'), $this->cfg('clientSecret'));
         $oidc->setRedirectURL($this->base.'?bs=oidc');
         $oidc->setCodeChallengeMethod('S256');
         $oidc->setAllowImplicitFlow(false);
@@ -287,17 +314,19 @@ final class App
     }
     private function startOidc(bool $link): never {
         $name = $link ? $this->recent() : null;
-        $_SESSION['bs']['oidc'] = ['link'=>$name, 'expires'=>time()+300];
+        $this->budget(hash('sha256', session_id()), 'oidc');
+        $_SESSION['bs']['oidc'] = ['link'=>$name, 'expires'=>time()+300, 'config'=>$this->oidcConfigStamp(), 'revision'=>$name !== null ? $_SESSION['bs']['auth']['revision'] : null];
         unset($_SESSION['bs']['pending']);
-        $this->oidcClient()->authenticate();
+        $this->oidcClient()->authenticateRequest([]);
         throw new UserError('Unable to redirect to SSO.');
     }
     private function oidc(): never {
         $flow = $_SESSION['bs']['oidc'] ?? null;
-        if (!$flow || $flow['expires'] < time() || !isset($_GET['code'], $_GET['state'])) { throw new UserError('SSO sign-in expired or was cancelled.'); }
+        unset($_SESSION['bs']['oidc']);
+        if (!$flow || $flow['expires'] < time() || ($flow['config'] ?? '') !== $this->oidcConfigStamp() || !isset($_GET['code'], $_GET['state'])) { throw new UserError('SSO sign-in expired or was cancelled.'); }
         // The library verifies state, nonce, JWT signature, issuer, audience and expiry.
         $oidc = $this->oidcClient();
-        $oidc->authenticate();
+        $oidc->authenticateRequest(['code'=>$_GET['code'], 'state'=>$_GET['state']]);
         unset($_SESSION['bs']['oidc']);
         $sub = $oidc->getVerifiedClaims('sub');
         $iss = $oidc->getVerifiedClaims('iss');
@@ -306,38 +335,44 @@ final class App
         if ($flow['link'] !== null) {
             $name = $this->recent();
             if ($name !== $flow['link']) { throw new UserError('Invalid account-linking session.'); }
-            $rev = $this->store->transaction(function (&$d) use ($name, $identity) {
+            $rev = $this->store->transaction(function (&$d) use ($name, $identity, $flow) {
                 foreach ($d['accounts'] as $other=>$a) { if ($other !== $name && $a['sso'] === $identity) { throw new UserError('This identity is already linked to another account.'); } }
-                $a = Store::account($d, $name); $a['sso'] = $identity; ++$a['revision']; $d['accounts'][$name] = $a; return $a['revision'];
+                $a = Store::account($d, $name);
+                if ($a['revision'] !== $flow['revision']) { throw new UserError('Account changed. Please start linking again.'); }
+                $a['sso'] = $identity; ++$a['revision']; $d['accounts'][$name] = $a; return $a['revision'];
             });
             $_SESSION['bs']['auth']['revision'] = $rev;
             $_SESSION['bs']['notice'] = 'SSO identity linked.'; $this->go('account');
         }
-        $name = $this->store->transaction(function (&$d) use ($identity) {
-            foreach ($d['accounts'] as $name=>$a) { if ($a['sso'] === $identity) { return $name; } } return null;
+        $match = $this->store->transaction(function (&$d) use ($identity) {
+            foreach ($d['accounts'] as $name=>$a) { if ($a['sso'] === $identity) { return ['name'=>$name, 'revision'=>$a['revision']]; } } return null;
         });
-        if ($name === null) { throw new UserError('This SSO identity is not linked to a Bludit account. Sign in with your password to link it.'); }
-        $this->budget($name); $this->pending($name, 'sso');
+        if ($match === null) { throw new UserError('This SSO identity is not linked to a Bludit account. Sign in with your password to link it.'); }
+        $this->budget($match['name']); $this->pending($match['name'], 'sso', $match['revision']);
         exit;
     }
     private function keyButton(bool $create, bool $automatic = false): string {
         return '<div class="webauthn"'.($automatic ? ' data-auto-passkey="true"' : '').' data-base="'.$this->e($this->base).'" data-csrf="'.$this->e($_SESSION['bs']['csrf']).'">'.($create?'<label>Passkey name<input class="key-label" maxlength="80" value="My passkey"></label>':'').'<button type="button" data-key="'.($create?'create':'get').'">'.($create?'Add passkey':'Try passkey again').'</button></div>';
     }
+    private function oidcConfigStamp(): string {
+        return hash('sha256', json_encode([$this->cfg('issuer'), $this->cfg('clientId'), $this->cfg('clientSecret')], JSON_THROW_ON_ERROR));
+    }
     private static function b64(string $raw): string { return rtrim(strtr(base64_encode($raw), '+/', '-_'), '='); }
     private static function unb64(string $raw): string {
-        if (!preg_match('/^[A-Za-z0-9_-]*$/D', $raw) || strlen($raw) > 100000) { throw new UserError('Invalid binary data'); }
+        if (strlen($raw) > 100000 || !preg_match('/^[A-Za-z0-9_-]*$/D', $raw)) { throw new UserError('Invalid binary data'); }
         $result = base64_decode(strtr($raw, '-_', '+/'), true);
-        if ($result === false) { throw new UserError('Invalid binary data'); } return $result;
+        if ($result === false || self::b64($result) !== $raw) { throw new UserError('Invalid binary data'); } return $result;
     }
     private function checkOrigin(string $client): void {
         $data = json_decode($client, true, 16, JSON_THROW_ON_ERROR);
-        if (($data['origin'] ?? null) !== $this->origin || !empty($data['crossOrigin'])) { throw new UserError('Invalid WebAuthn origin'); }
+        if (!is_array($data) || ($data['origin'] ?? null) !== $this->origin || (array_key_exists('crossOrigin', $data) && $data['crossOrigin'] !== false)) { throw new UserError('Invalid WebAuthn origin'); }
     }
     private function webauthn(string $action): never {
         $create = in_array($action, ['key-create-options','key-create-finish'], true);
         if (!in_array($action, ['key-create-options','key-create-finish','key-get-options','key-get-finish'], true)) { throw new UserError('Unknown action'); }
         $name = $create ? $this->recent() : $this->pendingUser()['name'];
         $this->budget($name, $create ? 'enroll' : 'auth'); $a = $this->store->get($name);
+        if ($create && $a['revision'] !== $_SESSION['bs']['auth']['revision']) { throw new UserError('Account changed. Please sign in again.'); }
         if (!$create && (!$this->allowed($a, 'passkey') || !$a['keys'])) { throw new UserError('Passkey unavailable'); }
         $wa = new \lbuchs\WebAuthn\WebAuthn('Bludit', parse_url($this->origin, PHP_URL_HOST), ['none'], true);
         if (str_ends_with($action, '-options')) {
@@ -368,6 +403,7 @@ final class App
             $this->json(['redirect'=>$this->accountUrl()]);
         }
         $id = (string)($_POST['id'] ?? '');
+        if (isset($_POST['userHandle']) && !hash_equals(hash('sha256', 'bludit:'.$name, true), self::unb64((string)$_POST['userHandle']))) { throw new UserError('Invalid passkey user handle'); }
         $this->store->update($name, function (&$a) use ($id, $ch, $wa, $client, $challenge) {
             if ($a['revision'] !== $ch['revision'] || !isset($a['keys'][$id])) { throw new UserError('Unknown credential'); }
             $key = $a['keys'][$id];
@@ -378,11 +414,7 @@ final class App
         $this->finishJson($name);
     }
     private function finishJson(string $name): never {
-        global $login, $security;
-        $u = $this->user($name); $a = $this->store->get($name);
-        $login->setLogin($name, $u['role']); $security->generateTokenCSRF();
-        $_SESSION['bs']['auth'] = ['name'=>$name, 'at'=>time(), 'revision'=>$a['revision']];
-        unset($_SESSION['bs']['pending'], $_SESSION['bs']['challenge']);
+        $this->completePending($name);
         $this->json(['redirect'=>DOMAIN_ADMIN]);
     }
 }
