@@ -2,7 +2,7 @@
 
 OIDC SSO, TOTP and passkey second-factor authentication for **Bludit 3.22.0**.
 
-Current version: **0.1.8 — experimental**. Test on a copy of your site before deployment.
+Current version: **1.0.0**.
 
 ## Features
 
@@ -55,9 +55,9 @@ For `bludit/docker`, copy the extracted plugin into `/usr/share/nginx/html/bl-pl
 docker cp bludit:/usr/share/nginx/html/bl-plugins/bludit-secure \
   "/tmp/bludit-secure-backup-$(date +%Y%m%d-%H%M%S)"
 
-unzip -o /tmp/bludit-secure-0.1.8.zip -d /tmp/bludit-secure-0.1.8
+unzip -o /tmp/bludit-secure-1.0.0.zip -d /tmp/bludit-secure-1.0.0
 
-docker cp /tmp/bludit-secure-0.1.8/bludit-secure/. \
+docker cp /tmp/bludit-secure-1.0.0/bludit-secure/. \
   bludit:/usr/share/nginx/html/bl-plugins/bludit-secure/
 
 docker restart bludit
@@ -117,6 +117,14 @@ If all factors are lost, use a recovery code. Without one, a server administrato
 The plugin protects **web sessions under `/admin`**. It does not change authentication for the Bludit API, other plugins or external services.
 
 JavaScript URLs include a content hash so updated passkey behavior is not hidden by stale asset caches.
+
+## Changes in 1.0.0
+
+- First stable release for Bludit 3.22.0.
+- Includes per-user TOTP, passkeys, linked OIDC identities, optional local MFA after SSO and single-use recovery codes.
+- Displays linked SSO profiles in Security and the administrator Users list.
+- Revokes sessions when passwords, roles or authentication methods change, and respects disabled Bludit accounts.
+- Includes the login CSRF and verification-rate-limit fixes from 0.1.7 and 0.1.8.
 
 ## Changes in 0.1.8
 

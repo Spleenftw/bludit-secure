@@ -1,1 +1,1 @@
-{"author":"Interlope","version":"0.1.8","releaseDate":"2026-11-03","license":"MIT","compatible":"3.22.0","notes":"PHP 8.2+, HTTPS, sodium, curl, mbstring. Preview: validate on staging before production."}
+{"author":"Interlope","version":"1.0.0","releaseDate":"2026-11-03","license":"MIT","compatible":"3.22.0","notes":"Per-user OIDC SSO, TOTP, passkeys and recovery codes. Requires PHP 8.2+, HTTPS, sodium, curl, mbstring and openssl."}
