@@ -2,7 +2,7 @@
 
 OIDC SSO, TOTP and passkey second-factor authentication for **Bludit 3.22.0**.
 
-Current version: **1.0.0**.
+Current version: **1.0.1**.
 
 ## Features
 
@@ -55,9 +55,9 @@ For `bludit/docker`, copy the extracted plugin into `/usr/share/nginx/html/bl-pl
 docker cp bludit:/usr/share/nginx/html/bl-plugins/bludit-secure \
   "/tmp/bludit-secure-backup-$(date +%Y%m%d-%H%M%S)"
 
-unzip -o /tmp/bludit-secure-1.0.0.zip -d /tmp/bludit-secure-1.0.0
+unzip -o /tmp/bludit-secure-1.0.1.zip -d /tmp/bludit-secure-1.0.1
 
-docker cp /tmp/bludit-secure-1.0.0/bludit-secure/. \
+docker cp /tmp/bludit-secure-1.0.1/bludit-secure/. \
   bludit:/usr/share/nginx/html/bl-plugins/bludit-secure/
 
 docker restart bludit
@@ -117,6 +117,12 @@ If all factors are lost, use a recovery code. Without one, a server administrato
 The plugin protects **web sessions under `/admin`**. It does not change authentication for the Bludit API, other plugins or external services.
 
 JavaScript URLs include a content hash so updated passkey behavior is not hidden by stale asset caches.
+
+## Changes in 1.0.1
+
+- Applies native form styling and spacing to the passkey name input.
+- Adds space below passkey registration controls and between saved passkey names and their removal buttons.
+- Excludes dependency test directories and example entry points from the installable ZIP.
 
 ## Changes in 1.0.0
 

@@ -276,7 +276,7 @@ final class App
             }
         } else { $body .= $this->form('manage', '<button name="op" value="totp-delete">Remove TOTP</button>'); }
         $body .= '<h2>Passkeys</h2><p>Register a passkey for this site using your password manager or authenticator.</p>'.$this->keyButton(true);
-        foreach ($a['keys'] as $id=>$k) { $body .= $this->form('manage', '<input type="hidden" name="key" value="'.$this->e($id).'"><span>'.$this->e($k['label']).'</span> <button name="op" value="key-delete">Remove passkey</button>'); }
+        foreach ($a['keys'] as $id=>$k) { $body .= $this->form('manage', '<input type="hidden" name="key" value="'.$this->e($id).'"><span class="mr-3">'.$this->e($k['label']).'</span> <button name="op" value="key-delete">Remove passkey</button>'); }
         $body .= '<h2>SSO</h2>';
         if ($a['sso']) {
             $profile = $a['ssoProfile'] ?? null;
@@ -422,7 +422,7 @@ final class App
         return '<script type="application/json" id="bs-sso-users">'.$data.'</script><script src="'.$this->e($this->plugin->htmlPath().'assets/users.js?v='.$version).'" defer></script>';
     }
     private function keyButton(bool $create, bool $automatic = false): string {
-        return '<div class="webauthn"'.($automatic ? ' data-auto-passkey="true"' : '').' data-base="'.$this->e($this->base).'" data-csrf="'.$this->e($_SESSION['bs']['csrf']).'">'.($create?'<label>Passkey name<input class="key-label" maxlength="80" value="My passkey"></label>':'').'<button type="button" data-key="'.($create?'create':'get').'">'.($create?'Add passkey':'Try passkey again').'</button></div>';
+        return '<div class="webauthn mb-3"'.($automatic ? ' data-auto-passkey="true"' : '').' data-base="'.$this->e($this->base).'" data-csrf="'.$this->e($_SESSION['bs']['csrf']).'">'.($create?'<label>Passkey name<input class="key-label form-control mt-2" maxlength="80" value="My passkey"></label>':'').'<button type="button" data-key="'.($create?'create':'get').'">'.($create?'Add passkey':'Try passkey again').'</button></div>';
     }
     private function oidcConfigStamp(): string {
         return hash('sha256', json_encode([$this->cfg('issuer'), $this->cfg('clientId'), $this->cfg('clientSecret')], JSON_THROW_ON_ERROR));
