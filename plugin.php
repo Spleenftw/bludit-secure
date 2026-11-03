@@ -76,4 +76,7 @@ class pluginBluditSecure extends Plugin
     public function adminSidebar() {
         return '<a class="nav-link" href="'.HTML_PATH_ADMIN_ROOT.'plugin/pluginbluditsecure"><span class="fa fa-shield" aria-hidden="true"></span>Security</a>';
     }
+    public function adminBodyEnd() {
+        return (new \BluditSecure\App($this))->usersViewEnhancement();
+    }
 }

@@ -52,7 +52,7 @@ final class App
         return $a['mode'] === 'either' || $a['mode'] === $factor;
     }
     private function requiresMfa(array $a, string $via): bool { return $a['mode'] !== 'off' && ($via !== 'sso' || $a['ssoMfa']); }
-    private function pending(string $name, string $via, ?int $revision = null, ?string $userStamp = null): void {
+    private function pending(string $name, string $via, ?int $revision = null, ?string $userStamp = null, ?array $ssoProfile = null): void {
         $user = $this->user($name);
         $a = $this->store->get($name);
         if (($revision !== null && $a['revision'] !== $revision) || ($userStamp !== null && $this->userStamp($user) !== $userStamp)) { throw new UserError('Account changed. Please sign in again.'); }
@@ -60,6 +60,7 @@ final class App
         // Do not carry enrollment secrets, recovery codes or linking flows across sign-ins.
         $_SESSION['bs'] = ['csrf'=>bin2hex(random_bytes(32))];
         $_SESSION['bs']['pending'] = ['name'=>$name, 'via'=>$via, 'expires'=>time()+300, 'revision'=>$a['revision'], 'userStamp'=>$this->userStamp($user)];
+        if ($via === 'sso' && $ssoProfile !== null) { $_SESSION['bs']['pending']['ssoProfile'] = $ssoProfile; }
         if (!$this->requiresMfa($a, $via)) { $this->finish($name); }
         $this->go('mfa');
     }
@@ -75,6 +76,7 @@ final class App
         $this->store->transaction(function (&$d) use ($name, $p, $login, $security) {
             $u = $this->user($name); $a = Store::account($d, $name);
             if ($a['revision'] !== $p['revision'] || $this->userStamp($u) !== $p['userStamp']) { throw new UserError('Account changed. Please sign in again.'); }
+            if ($p['via'] === 'sso' && isset($p['ssoProfile'])) { $d['accounts'][$name]['ssoProfile'] = $p['ssoProfile']; }
             $login->setLogin($name, $u['role']);
             $security->generateTokenCSRF();
             $_SESSION['bs']['auth'] = ['name'=>$name, 'at'=>time(), 'revision'=>$p['revision'], 'userStamp'=>$p['userStamp']];
@@ -256,7 +258,16 @@ final class App
         $body .= '<h2>Passkeys</h2><p>Register a passkey for this site using your password manager or authenticator.</p>'.$this->keyButton(true);
         foreach ($a['keys'] as $id=>$k) { $body .= $this->form('manage', '<input type="hidden" name="key" value="'.$this->e($id).'"><span>'.$this->e($k['label']).'</span> <button name="op" value="key-delete">Remove passkey</button>'); }
         $body .= '<h2>SSO</h2>';
-        if ($a['sso']) { $body .= '<p>SSO identity linked.</p>'.$this->form('manage', '<button name="op" value="unlink">Unlink SSO</button>'); }
+        if ($a['sso']) {
+            $profile = $a['ssoProfile'] ?? null;
+            $body .= '<p>SSO identity linked to <strong>'.$this->e($profile['provider'] ?? $a['sso']['issuer']).'</strong>.</p>';
+            if ($profile !== null) {
+                $body .= '<p>SSO username: '.$this->e($profile['username'] ?? 'Not provided').'<br>SSO email: '.$this->e($profile['email'] ?? 'Not provided');
+                if (!empty($profile['email']) && empty($profile['emailVerified'])) { $body .= ' <span class="text-muted">(not verified by provider)</span>'; }
+                $body .= '</p>';
+            } else { $body .= '<p class="text-muted">Sign in with SSO to load your provider username and email.</p>'; }
+            $body .= $this->form('manage', '<button name="op" value="unlink">Unlink SSO</button>');
+        }
         elseif ($this->ssoEnabled()) { $body .= $this->form('link', '<button>Link account to '.$this->e($this->cfg('ssoLabel')).'</button>'); }
         else { $body .= '<p>An administrator must configure SSO first.</p>'; }
         $body .= '<h2>Recovery</h2><p>'.count($a['recovery']).' recovery code(s) remaining. Generating new codes invalidates the previous ones. Store them outside your account.</p>'.$this->form('manage', '<button name="op" value="recovery">Generate ten recovery codes</button>');
@@ -286,7 +297,7 @@ final class App
                     unset($_SESSION['bs']['enroll']); break;
                 case 'totp-delete': $a['totp'] = null; $a['lastStep'] = -1; break;
                 case 'key-delete': unset($a['keys'][(string)($_POST['key'] ?? '')]); break;
-                case 'unlink': $a['sso'] = null; break;
+                case 'unlink': $a['sso'] = null; $a['ssoProfile'] = null; break;
                 case 'recovery': $a['recovery'] = array_map(fn($c)=>hash('sha256',$c), $codes); break;
                 case 'preferences':
                     $mode = $_POST['mode'] ?? '';
@@ -307,6 +318,7 @@ final class App
         if (!$this->ssoEnabled() || parse_url($this->cfg('issuer'), PHP_URL_SCHEME) !== 'https') { throw new UserError('SSO is not configured.'); }
         $oidc = new OidcClient($this->cfg('issuer'), $this->cfg('clientId'), $this->cfg('clientSecret'));
         $oidc->setRedirectURL($this->base.'?bs=oidc');
+        $oidc->addScope(['profile', 'email']);
         $oidc->setCodeChallengeMethod('S256');
         $oidc->setAllowImplicitFlow(false);
         $oidc->setTimeout(15);
@@ -332,14 +344,15 @@ final class App
         $iss = $oidc->getVerifiedClaims('iss');
         if (!is_string($sub) || $sub === '' || !is_string($iss) || $iss !== $this->cfg('issuer')) { throw new UserError('Invalid SSO identity.'); }
         $identity = ['issuer'=>$iss, 'subject'=>$sub];
+        $profile = $this->ssoProfile($oidc);
         if ($flow['link'] !== null) {
             $name = $this->recent();
             if ($name !== $flow['link']) { throw new UserError('Invalid account-linking session.'); }
-            $rev = $this->store->transaction(function (&$d) use ($name, $identity, $flow) {
+            $rev = $this->store->transaction(function (&$d) use ($name, $identity, $flow, $profile) {
                 foreach ($d['accounts'] as $other=>$a) { if ($other !== $name && $a['sso'] === $identity) { throw new UserError('This identity is already linked to another account.'); } }
                 $a = Store::account($d, $name);
                 if ($a['revision'] !== $flow['revision']) { throw new UserError('Account changed. Please start linking again.'); }
-                $a['sso'] = $identity; ++$a['revision']; $d['accounts'][$name] = $a; return $a['revision'];
+                $a['sso'] = $identity; $a['ssoProfile'] = $profile; ++$a['revision']; $d['accounts'][$name] = $a; return $a['revision'];
             });
             $_SESSION['bs']['auth']['revision'] = $rev;
             $_SESSION['bs']['notice'] = 'SSO identity linked.'; $this->go('account');
@@ -348,8 +361,45 @@ final class App
             foreach ($d['accounts'] as $name=>$a) { if ($a['sso'] === $identity) { return ['name'=>$name, 'revision'=>$a['revision']]; } } return null;
         });
         if ($match === null) { throw new UserError('This SSO identity is not linked to a Bludit account. Sign in with your password to link it.'); }
-        $this->budget($match['name']); $this->pending($match['name'], 'sso', $match['revision']);
+        $this->budget($match['name']); $this->pending((string)$match['name'], 'sso', $match['revision'], null, $profile);
         exit;
+    }
+    private function ssoProfile(OidcClient $oidc): array {
+        $claim = static function (mixed $value, int $length): ?string {
+            if (!is_string($value)) { return null; }
+            $value = mb_substr(trim(preg_replace('/[\x00-\x1f\x7f]/u', '', $value)), 0, $length);
+            return $value === '' ? null : $value;
+        };
+        return [
+            'provider'=>mb_substr($this->cfg('ssoLabel'), 0, 80) ?: $this->cfg('issuer'),
+            'username'=>$claim($oidc->getVerifiedClaims('preferred_username'), 200),
+            'email'=>$claim($oidc->getVerifiedClaims('email'), 320),
+            'emailVerified'=>$oidc->getVerifiedClaims('email_verified') === true
+        ];
+    }
+    public function usersViewEnhancement(): string {
+        global $layout, $users;
+        if (($layout['view'] ?? '') !== 'users') { return ''; }
+        $name = $this->authenticated();
+        if ($name === null || $this->user($name)['role'] !== 'admin') { return ''; }
+        $names = $users->keys();
+        $rows = $this->store->transaction(function (&$d) use ($names) {
+            $rows = [];
+            foreach ($names as $name) {
+                $a = Store::account($d, (string)$name);
+                $identity = $a['sso']; $profile = $a['ssoProfile'] ?? null;
+                $rows[] = ['url'=>HTML_PATH_ADMIN_ROOT.'edit-user/'.$name, 'linked'=>$identity !== null,
+                    'provider'=>$identity !== null ? ($profile['provider'] ?? $identity['issuer']) : null,
+                    'username'=>$identity !== null ? ($profile['username'] ?? null) : null,
+                    'email'=>$identity !== null ? ($profile['email'] ?? null) : null,
+                    'emailVerified'=>$identity !== null && ($profile['emailVerified'] ?? false) === true,
+                    'needsRefresh'=>$identity !== null && $profile === null];
+            }
+            return $rows;
+        });
+        $data = json_encode($rows, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
+        $version = substr(hash_file('sha256', dirname(__DIR__).'/assets/users.js'), 0, 16);
+        return '<script type="application/json" id="bs-sso-users">'.$data.'</script><script src="'.$this->e($this->plugin->htmlPath().'assets/users.js?v='.$version).'" defer></script>';
     }
     private function keyButton(bool $create, bool $automatic = false): string {
         return '<div class="webauthn"'.($automatic ? ' data-auto-passkey="true"' : '').' data-base="'.$this->e($this->base).'" data-csrf="'.$this->e($_SESSION['bs']['csrf']).'">'.($create?'<label>Passkey name<input class="key-label" maxlength="80" value="My passkey"></label>':'').'<button type="button" data-key="'.($create?'create':'get').'">'.($create?'Add passkey':'Try passkey again').'</button></div>';

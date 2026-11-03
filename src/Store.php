@@ -65,7 +65,7 @@ final class Store
         } finally { if (file_exists($tmp)) { unlink($tmp); } }
     }
     public static function account(array $data, string $name): array {
-        return $data['accounts'][$name] ?? ['totp'=>null, 'lastStep'=>-1, 'keys'=>[], 'recovery'=>[], 'mode'=>'off', 'sso'=>null, 'ssoMfa'=>true, 'revision'=>0];
+        return $data['accounts'][$name] ?? ['totp'=>null, 'lastStep'=>-1, 'keys'=>[], 'recovery'=>[], 'mode'=>'off', 'sso'=>null, 'ssoProfile'=>null, 'ssoMfa'=>true, 'revision'=>0];
     }
     public function get(string $name): array { return $this->transaction(fn(&$d) => self::account($d, $name)); }
     public function update(string $name, callable $fn): mixed {

@@ -1,1 +1,1 @@
-{"author":"Interlope","version":"0.1.5","releaseDate":"2026-11-02","license":"MIT","compatible":"3.22.0","notes":"PHP 8.2+, HTTPS, sodium, curl, mbstring. Preview: validate on staging before production."}
+{"author":"Interlope","version":"0.1.6","releaseDate":"2026-11-03","license":"MIT","compatible":"3.22.0","notes":"PHP 8.2+, HTTPS, sodium, curl, mbstring. Preview: validate on staging before production."}

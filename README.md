@@ -2,7 +2,7 @@
 
 OIDC SSO, TOTP and passkey second-factor authentication for **Bludit 3.22.0**.
 
-Current version: **0.1.5 — experimental**. Test on a copy of your site before deployment.
+Current version: **0.1.6 — experimental**. Test on a copy of your site before deployment.
 
 ## Features
 
@@ -10,6 +10,7 @@ Current version: **0.1.5 — experimental**. Test on a copy of your site before 
 - Adds a full-width, slate-grey **Sign in with XYZ** button with a configurable provider name.
 - Automatically opens the browser passkey prompt after password verification when a passkey is enabled. Cancellation does not trigger a prompt loop; an explicit retry remains available.
 - Integrates **Security** into the native admin dashboard, including its sidebar, shield icon and Bootstrap controls. Sign out through the existing **Log out** sidebar entry.
+- Shows SSO link status, provider, SSO username and SSO email in the administrator's native **Users** list and the user's **Security** page.
 - Lets each user register TOTP, multiple named passkeys and an OIDC identity, then choose their own second-factor policy: disabled, TOTP, passkey, or either method.
 - Optionally requires the local second factor after SSO as well.
 - Provides ten single-use recovery codes, shown once and replaceable at any time.
@@ -54,9 +55,9 @@ For `bludit/docker`, copy the extracted plugin into `/usr/share/nginx/html/bl-pl
 docker cp bludit:/usr/share/nginx/html/bl-plugins/bludit-secure \
   "/tmp/bludit-secure-backup-$(date +%Y%m%d-%H%M%S)"
 
-unzip -o /tmp/bludit-secure-0.1.5.zip -d /tmp/bludit-secure-0.1.5
+unzip -o /tmp/bludit-secure-0.1.6.zip -d /tmp/bludit-secure-0.1.6
 
-docker cp /tmp/bludit-secure-0.1.5/bludit-secure/. \
+docker cp /tmp/bludit-secure-0.1.6/bludit-secure/. \
   bludit:/usr/share/nginx/html/bl-plugins/bludit-secure/
 
 docker restart bludit
@@ -75,6 +76,10 @@ https://blog.example/admin/login?bs=oidc
 The URI respects Bludit's configured admin path and installation subdirectory. Enter the exact issuer URL, client ID and client secret. Choose the provider name displayed in **Sign in with XYZ**. Leaving the client secret field blank preserves its current value.
 
 Each user first signs in to their existing Bludit account, opens **Security**, then selects **Link account to …**. After provider authentication, the identity is associated with that account using **issuer + subject**. Identities are never linked automatically by email. A provider identity cannot be linked to two accounts.
+
+The plugin requests `openid profile email`. The provider's username (`preferred_username`) and email are display information, stored in the encrypted plugin database. They do not change the Bludit username, email or role and are never used to associate accounts. Emails not marked verified by the provider are labeled accordingly. Administrators can see these details on **Users**; each user can see their own on **Security**.
+
+Existing SSO links remain valid. Sign in with SSO once after upgrading to populate the username and email; the provider may ask you to approve the additional scopes. Profile details refresh after a successful SSO sign-in, including the local second factor when required. Missing optional claims are shown as **Not provided**. Unlinking SSO removes its stored profile details.
 
 Authorization Code flow uses PKCE S256. The jumbojett library checks state, nonce, token signature and claims. Bludit account roles remain authoritative; the plugin does not create accounts or assign roles from provider claims.
 
@@ -112,6 +117,13 @@ If all factors are lost, use a recovery code. Without one, a server administrato
 The plugin protects **web sessions under `/admin`**. It does not change authentication for the Bludit API, other plugins or external services.
 
 JavaScript URLs include a content hash so updated passkey behavior is not hidden by stale asset caches.
+
+## Changes in 0.1.6
+
+- Adds SSO link status, provider, username and email to the native administrator Users table.
+- Displays the linked SSO profile on Security and refreshes it after completed SSO sign-in.
+- Requests profile and email scopes while keeping account matching strictly on issuer and subject.
+- Preserves existing registrations and indicates when an older link needs an SSO sign-in to load profile details.
 
 ## Changes in 0.1.5
 
